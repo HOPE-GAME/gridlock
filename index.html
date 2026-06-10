@@ -242,7 +242,7 @@ body{background:var(--dark);color:#e0e8f0;font-family:'Rajdhani',sans-serif;over
         <div class="hpbar"><div class="hpfill" id="hpf" style="width:100%"></div></div>
         <div class="hpval" id="hpv">100</div>
       </div>
-      <div class="hhint">WASD MOVE | CLICK SHOOT | R RELOAD | E LOOT | 1-5 SLOT | V VIEW | ESC PAUSE</div>
+      <div class="hhint">WASD MOVE | CLICK SHOOT | R RELOAD | E LOOT | G GRENADE | F MELEE | T ATTACHMENT | 1-5 SLOT | V VIEW | ESC PAUSE</div>
       <div class="hammo"><div class="hammov" id="h-ammo">--</div><div class="hammom" id="h-amax">find a crate</div></div>
     </div>
   </div>
@@ -314,6 +314,10 @@ var MAP = 75, numBots = 3, killLimit = 20, gameMode = 'ffa';
 var hotbar = [null,null,null,null,null], activeSlot = 0;
 var crateT = 0, walkT = 0;
 var moveUpdateTimer = 0;
+var armour = 0, maxArmour = 100;
+var grenades = 0, grenadeT = 0, thrownGrenades = [];
+var lastMelee = 0, meleeAnim = 0;
+var attachment = null; // current attachment on active gun: null, 'scope', 'silencer'
 
 function show(id){document.getElementById(id).classList.remove('hidden');}
 function hide(id){document.getElementById(id).classList.add('hidden');}
@@ -505,6 +509,7 @@ function toMenu(){
 function startGame(matchData){
   hp=100; kills=0; deaths=0; shots=0; hits=0;
   reloading=false; lastShot=0; crateT=0; walkT=0;
+  armour=0; grenades=0; thrownGrenades=[]; meleeAnim=0; attachment=null;
   hotbar=[null,null,null,null,null]; activeSlot=0;
   remotePlayers={}; bots=[]; playerBullets=[]; botBullets=[]; crates=[]; barrels=[];
   keys={}; yaw=0; pitch=0; tp=false; paused=false; over=false;
@@ -722,7 +727,32 @@ function spawnCrates(){
     cm.position.set(positions[i][0],0.45,positions[i][1]); cm.castShadow=true; scene.add(cm);
     var glow=new THREE.PointLight(gun.col,0.8,5);
     glow.position.copy(cm.position); glow.position.y+=0.6; scene.add(glow);
-    crates.push({mesh:cm,glow:glow,gun:gun,taken:false});
+    crates.push({mesh:cm,glow:glow,gun:gun,taken:false,type:'gun'});
+  }
+  // Armour crates (blue glow)
+  var armourPos=[[10,-10],[-10,10],[30,30],[-30,-30],[50,0],[-50,0],[0,50],[0,-50]];
+  for(var ai=0;ai<armourPos.length;ai++){
+    var am=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),new THREE.MeshLambertMaterial({color:0x1a3a6a,emissive:new THREE.Color(0x1a3a6a),emissiveIntensity:0.5}));
+    am.position.set(armourPos[ai][0],0.45,armourPos[ai][1]); am.castShadow=true; scene.add(am);
+    var ag=new THREE.PointLight(0x3a8fff,0.9,5); ag.position.copy(am.position); ag.position.y+=0.6; scene.add(ag);
+    crates.push({mesh:am,glow:ag,taken:false,type:'armour'});
+  }
+  // Grenade crates (orange glow)
+  var grenPos=[[15,0],[-15,0],[0,15],[0,-15],[40,-20],[-40,20],[20,40],[-20,-40]];
+  for(var gi=0;gi<grenPos.length;gi++){
+    var grm=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),new THREE.MeshLambertMaterial({color:0x4a2a0a,emissive:new THREE.Color(0x4a2a0a),emissiveIntensity:0.5}));
+    grm.position.set(grenPos[gi][0],0.45,grenPos[gi][1]); grm.castShadow=true; scene.add(grm);
+    var grg=new THREE.PointLight(0xff8800,0.9,5); grg.position.copy(grm.position); grg.position.y+=0.6; scene.add(grg);
+    crates.push({mesh:grm,glow:grg,taken:false,type:'grenade'});
+  }
+  // Attachment crates (purple glow)
+  var attTypes=['scope','scope','silencer','silencer','scope','silencer'];
+  var attPos=[[22,-22],[-22,22],[22,22],[-22,-22],[45,10],[-45,-10]];
+  for(var ati=0;ati<attPos.length;ati++){
+    var atm=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),new THREE.MeshLambertMaterial({color:0x3a1a5a,emissive:new THREE.Color(0x3a1a5a),emissiveIntensity:0.5}));
+    atm.position.set(attPos[ati][0],0.45,attPos[ati][1]); atm.castShadow=true; scene.add(atm);
+    var atg=new THREE.PointLight(0xcc44ff,0.9,5); atg.position.copy(atm.position); atg.position.y+=0.6; scene.add(atg);
+    crates.push({mesh:atm,glow:atg,taken:false,type:'attachment',attachmentType:attTypes[ati%attTypes.length]});
   }
 }
 
@@ -733,6 +763,9 @@ function onKD(e){
   if(e.code==='KeyV'&&!paused&&!over) toggleTP();
   if(e.code==='KeyR'&&!paused&&!over) reload();
   if(e.code==='KeyE'&&!paused&&!over) tryLoot();
+  if(e.code==='KeyG'&&!paused&&!over) throwGrenade();
+  if(e.code==='KeyF'&&!paused&&!over) doMelee();
+  if(e.code==='KeyT'&&!paused&&!over) cycleAttachment();
   if(e.code==='Digit1') selectSlot(0);
   if(e.code==='Digit2') selectSlot(1);
   if(e.code==='Digit3') selectSlot(2);
@@ -773,14 +806,30 @@ function tryLoot(){
     var c=crates[i]; if(c.taken) continue;
     var dx=c.mesh.position.x-pp.x, dz=c.mesh.position.z-pp.z;
     if(Math.sqrt(dx*dx+dz*dz)<2.5){
+      c.taken=true; scene.remove(c.mesh); scene.remove(c.glow);
+      socket.emit('crateTaken',{x:c.mesh.position.x,z:c.mesh.position.z});
+      if(c.type==='armour'){
+        armour=Math.min(maxArmour, armour+50);
+        updateHUD(); showPickup('ARMOUR +50 picked up!'); return;
+      }
+      if(c.type==='grenade'){
+        grenades=Math.min(5, grenades+2);
+        updateHUD(); showPickup('GRENADES x2 picked up! (G to throw)'); return;
+      }
+      if(c.type==='attachment'){
+        var att=c.attachmentType;
+        var slot2=hotbar[activeSlot];
+        if(slot2){slot2.attachment=att;showPickup(att.toUpperCase()+' attached to '+slot2.gun.name+'!');}
+        else{showPickup(att.toUpperCase()+' picked up! Equip a gun first.');}
+        attachment=att; updateHUD(); renderHotbar(); return;
+      }
+      // gun crate
       var slot=-1;
       for(var s=0;s<5;s++){if(!hotbar[s]){slot=s;break;}}
       if(slot===-1) slot=activeSlot;
-      hotbar[slot]={gun:c.gun,ammo:c.gun.mag};
-      c.taken=true; scene.remove(c.mesh); scene.remove(c.glow);
+      hotbar[slot]={gun:c.gun,ammo:c.gun.mag,attachment:null};
       activeSlot=slot; renderHotbar(); updateHUD();
       showPickup(c.gun.rarity.toUpperCase()+' '+c.gun.name+' picked up!');
-      socket.emit('crateTaken',{x:c.mesh.position.x,z:c.mesh.position.z});
       return;
     }
   }
@@ -792,6 +841,80 @@ function showPickup(msg){
   clearTimeout(el._t); el._t=setTimeout(function(){hide('pickup-txt');},2000);
 }
 
+function throwGrenade(){
+  if(grenades<=0){showPickup('No grenades! Find a grenade crate.');return;}
+  grenades--; updateHUD();
+  var dir=new THREE.Vector3(Math.sin(yaw),0.4,Math.cos(yaw)).normalize();
+  var origin=playerMesh.position.clone(); origin.y+=1.2;
+  var gm=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,8),new THREE.MeshLambertMaterial({color:0x2a4a20,emissive:new THREE.Color(0x1a3a10),emissiveIntensity:0.4}));
+  gm.position.copy(origin); scene.add(gm);
+  var glight=new THREE.PointLight(0xff6600,0,8); glight.position.copy(origin); scene.add(glight);
+  thrownGrenades.push({mesh:gm,light:glight,vel:dir.multiplyScalar(0.4),life:90,exploded:false});
+  showPickup('Grenade thrown! ('+grenades+' left)');
+}
+
+function updateGrenades(){
+  for(var i=thrownGrenades.length-1;i>=0;i--){
+    var g=thrownGrenades[i]; if(g.exploded) continue;
+    g.mesh.position.add(g.vel); g.vel.y-=0.012;
+    g.mesh.rotation.x+=0.15; g.life--;
+    g.light.position.copy(g.mesh.position);
+    if(g.life<=0){
+      g.exploded=true;
+      g.light.intensity=8;
+      var gp=g.mesh.position.clone();
+      scene.remove(g.mesh); scene.remove(g.light);
+      thrownGrenades.splice(i,1);
+      // explosion flash
+      var fl=new THREE.PointLight(0xff8800,12,25); fl.position.copy(gp); scene.add(fl);
+      setTimeout(function(){scene.remove(fl);},600);
+      flashDmg(); addKF('GRENADE','exploded!');
+      // damage bots
+      for(var b=0;b<bots.length;b++){
+        var bot=bots[b]; if(bot.hp<=0) continue;
+        var dx=bot.mesh.position.x-gp.x, dz=bot.mesh.position.z-gp.z;
+        var dist=Math.sqrt(dx*dx+dz*dz);
+        if(dist<8){bot.hp-=Math.round(70*(1-dist/8));if(bot.hp<=0)killBot(bot);}
+      }
+      // damage player if too close
+      var pdx=playerMesh.position.x-gp.x, pdz=playerMesh.position.z-gp.z;
+      var pdist=Math.sqrt(pdx*pdx+pdz*pdz);
+      if(pdist<5){hp-=Math.round(40*(1-pdist/5));if(hp<1)hp=1;updateHUD();}
+    }
+  }
+}
+
+function doMelee(){
+  var now=Date.now(); if(now-lastMelee<800) return; lastMelee=now;
+  meleeAnim=8;
+  showPickup('MELEE!');
+  // check bots in range
+  var pp=playerMesh.position;
+  var hit=false;
+  for(var i=0;i<bots.length;i++){
+    var b=bots[i]; if(b.hp<=0) continue;
+    var dx=b.mesh.position.x-pp.x, dz=b.mesh.position.z-pp.z;
+    if(Math.sqrt(dx*dx+dz*dz)<2.2){
+      b.hp-=40; hits++; hitMarker();
+      if(b.hp<=0) killBot(b);
+      hit=true;
+    }
+  }
+  if(!hit) showPickup('Melee miss - get closer!');
+}
+
+function cycleAttachment(){
+  var slot=hotbar[activeSlot];
+  if(!slot){showPickup('Equip a gun first!');return;}
+  var atts=[null,'scope','silencer'];
+  var cur=atts.indexOf(slot.attachment||null);
+  var next=atts[(cur+1)%atts.length];
+  slot.attachment=next;
+  if(next===null) showPickup('Attachment removed');
+  else showPickup(next.toUpperCase()+' attached to '+slot.gun.name+'!');
+  renderHotbar(); updateHUD();
+}
+
 function fire(){
   if(paused||over||reloading) return;
   var slot=hotbar[activeSlot];
@@ -800,9 +923,11 @@ function fire(){
   if(slot.ammo<=0){reload();return;}
   slot.ammo--; shots++; renderHotbar(); updateHUD();
   var numPellets=slot.gun.pellets||1;
+  var spreadMult=(slot.attachment==='scope')?0.2:1.0;
+  var bulletCol=(slot.attachment==='silencer')?0x334433:slot.gun.col;
   for(var p=0;p<numPellets;p++){
-    var sx=(Math.random()-0.5)*slot.gun.spread*2;
-    var sy=(Math.random()-0.5)*slot.gun.spread*2;
+    var sx=(Math.random()-0.5)*slot.gun.spread*spreadMult*2;
+    var sy=(Math.random()-0.5)*slot.gun.spread*spreadMult*2;
     var dir=new THREE.Vector3(sx,sy,-1);
     dir.applyEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));
     var origin=cam.position.clone();
@@ -840,7 +965,7 @@ function fire(){
     }
     // Broadcast shot visually to others
     socket.emit('shoot',{ox:origin.x,oy:origin.y,oz:origin.z,dx:ndir.x,dy:ndir.y,dz:ndir.z});
-    var tm=new THREE.Mesh(new THREE.SphereGeometry(0.04,4,4),new THREE.MeshBasicMaterial({color:gotHit?0xff2222:slot.gun.col}));
+    var tm=new THREE.Mesh(new THREE.SphereGeometry(0.04,4,4),new THREE.MeshBasicMaterial({color:gotHit?0xff2222:bulletCol}));
     tm.position.copy(origin); scene.add(tm);
     playerBullets.push({mesh:tm,vel:dir.clone().multiplyScalar(slot.gun.bspeed),life:25});
   }
@@ -941,8 +1066,10 @@ function updateBullets(){
     var bx=b.mesh.position.x-pp.x,by=b.mesh.position.y-(pp.y+0.9),bz=b.mesh.position.z-pp.z;
     if(Math.sqrt(bx*bx+by*by+bz*bz)<0.8){
       scene.remove(b.mesh); botBullets.splice(i,1);
-      hp-=15; flashDmg();
-      if(hp<=0){hp=100;deaths++;addKF(b.from,myPlayerData?myPlayerData.name:'You');}
+      var dmg=15;
+      if(armour>0){var ab=Math.min(armour,dmg);armour-=ab;dmg-=ab;}
+      hp-=dmg; flashDmg();
+      if(hp<=0){hp=100;armour=0;deaths++;addKF(b.from,myPlayerData?myPlayerData.name:'You');}
       updateHUD();
     }
   }
@@ -1001,8 +1128,15 @@ function renderHotbar(){
   for(var i=0;i<5;i++){
     var s=hotbar[i];var ac=i===activeSlot?' active':'';var hg=s?' has-gun':'';
     html+='<div class="hslot'+ac+hg+'"><span class="hslot-num">'+(i+1)+'</span>';
-    if(s){var rc=RARITY_COLS[s.gun.rarity];html+='<span class="hslot-icon" style="color:'+rc+'">'+s.gun.icon+'</span><span class="hslot-name" style="color:'+rc+'">'+s.gun.name+'</span><span class="hslot-ammo">'+s.ammo+'/'+s.gun.mag+'</span>';}
-    else{html+='<span class="hslot-icon" style="color:#333">-</span><span class="hslot-name" style="color:#333">empty</span>';}
+    if(s){
+      var rc=RARITY_COLS[s.gun.rarity];
+      var attIcon=s.attachment==='scope'?'[SC]':s.attachment==='silencer'?'[SL]':'';
+      html+='<span class="hslot-icon" style="color:'+rc+'">'+s.gun.icon+'</span>';
+      html+='<span class="hslot-name" style="color:'+rc+'">'+s.gun.name+(attIcon?' <span style="color:#cc44ff;font-size:7px">'+attIcon+'</span>':'')+'</span>';
+      html+='<span class="hslot-ammo">'+s.ammo+'/'+s.gun.mag+'</span>';
+    } else {
+      html+='<span class="hslot-icon" style="color:#333">-</span><span class="hslot-name" style="color:#333">empty</span>';
+    }
     html+='</div>';
   }
   hb.innerHTML=html;
@@ -1011,11 +1145,17 @@ function updateHUD(){
   var h=Math.max(0,hp);
   document.getElementById('hpf').style.width=h+'%';
   document.getElementById('hpf').style.background=h>50?'#2ecc71':h>25?'#f0c040':'#e03030';
-  document.getElementById('hpv').textContent=h;
+  document.getElementById('hpv').textContent=h+(armour>0?' + '+armour+' ARM':'');
   var slot=hotbar[activeSlot];
-  if(slot){document.getElementById('h-ammo').textContent=slot.ammo;document.getElementById('h-amax').textContent='/ '+slot.gun.mag+' '+slot.gun.name;}
-  else{document.getElementById('h-ammo').textContent='--';document.getElementById('h-amax').textContent='find a crate (E)';}
-  document.getElementById('h-kd').textContent='K:'+kills+'  D:'+deaths;
+  if(slot){
+    var attTxt=slot.attachment?(' ['+slot.attachment.toUpperCase()+']'):'';
+    document.getElementById('h-ammo').textContent=slot.ammo;
+    document.getElementById('h-amax').textContent='/ '+slot.gun.mag+' '+slot.gun.name+attTxt;
+  } else {
+    document.getElementById('h-ammo').textContent='--';
+    document.getElementById('h-amax').textContent='find a crate (E)';
+  }
+  document.getElementById('h-kd').textContent='K:'+kills+'  D:'+deaths+'  G:'+grenades;
   document.getElementById('h-score').textContent=kills+' / '+killLimit;
 }
 function updateScoreboard(scores){
@@ -1036,7 +1176,7 @@ function addKF(k,v){
 function loop(){
   animId=requestAnimationFrame(loop); if(paused) return;
   var dt=clock.getDelta(); if(dt>0.05)dt=0.05;
-  updatePlayer(dt); updateBots(dt); updateBullets(); updateCrates(dt);
+  updatePlayer(dt); updateBots(dt); updateBullets(); updateCrates(dt); updateGrenades();
   renderer.render(scene,cam);
 }
 window.addEventListener('resize',function(){
