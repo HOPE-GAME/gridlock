@@ -1186,16 +1186,14 @@ function updateCrates(dt){
   }
 }
 function updatePlayer(dt){
-  var spd=6*dt,fx=0,fz=0;
-  // Forward = where camera faces (yaw direction)
-  var fwdX=Math.sin(yaw), fwdZ=-Math.cos(yaw);
-  // Right = 90 degrees clockwise from forward
-  var rgtX=Math.cos(yaw), rgtZ=Math.sin(yaw);
+  var spd=6*dt;
   var wx=0, wz=0;
-  if(keys['KeyW']){wx+=fwdX; wz+=fwdZ;}   // forward
-  if(keys['KeyS']){wx-=fwdX; wz-=fwdZ;}   // back
-  if(keys['KeyA']){wx-=rgtX; wz-=rgtZ;}   // left
-  if(keys['KeyD']){wx+=rgtX; wz+=rgtZ;}   // right
+  // Move relative to where camera is facing (yaw)
+  var sinY=Math.sin(yaw), cosY=Math.cos(yaw);
+  if(keys['KeyW']){wx-=sinY; wz+=cosY;}   // forward
+  if(keys['KeyS']){wx+=sinY; wz-=cosY;}   // back
+  if(keys['KeyA']){wx-=cosY; wz-=sinY;}   // left
+  if(keys['KeyD']){wx+=cosY; wz+=sinY;}   // right
   var moving=wx!==0||wz!==0;
   var len=Math.sqrt(wx*wx+wz*wz); if(len>0){wx/=len;wz/=len;}
   playerMesh.position.x+=wx*spd; playerMesh.position.z+=wz*spd;
