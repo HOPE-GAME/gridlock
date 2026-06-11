@@ -1162,9 +1162,9 @@ function updateCrates(dt){
 function updatePlayer(dt){
   var spd=6*dt,fx=0,fz=0;
   // Forward = where camera faces (yaw direction)
-  var fwdX=Math.sin(yaw), fwdZ=Math.cos(yaw);
+  var fwdX=Math.sin(yaw), fwdZ=-Math.cos(yaw);
   // Right = 90 degrees clockwise from forward
-  var rgtX=Math.cos(yaw), rgtZ=-Math.sin(yaw);
+  var rgtX=Math.cos(yaw), rgtZ=Math.sin(yaw);
   var wx=0, wz=0;
   if(keys['KeyW']){wx+=fwdX; wz+=fwdZ;}   // forward
   if(keys['KeyS']){wx-=fwdX; wz-=fwdZ;}   // back
