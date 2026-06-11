@@ -151,6 +151,16 @@ body{background:var(--dark);color:#e0e8f0;font-family:'Rajdhani',sans-serif;over
 .spec-title{font-size:20px;font-weight:700;letter-spacing:.12em;color:var(--red);}
 .spec-sub{font-size:11px;color:var(--muted);margin-top:3px;letter-spacing:.08em;}
 #spec-target{position:absolute;top:14px;left:50%;transform:translateX(-50%);font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--yellow);background:#00000066;padding:4px 12px;border-radius:6px;}
+/* GAME CHAT */
+#gc-chat{position:absolute;bottom:200px;left:18px;width:280px;pointer-events:none;}
+#gc-msgs{display:flex;flex-direction:column;gap:3px;margin-bottom:6px;max-height:140px;overflow:hidden;}
+.gc-msg{font-size:12px;font-weight:600;background:#00000066;padding:3px 9px;border-radius:5px;border-left:2px solid var(--blue);animation:fk 8s forwards;}
+.gc-msg .gc-who{color:var(--blue);}
+#gc-input-wrap{display:flex;gap:6px;pointer-events:all;display:none;}
+#gc-input{flex:1;background:#00000088;border:1px solid var(--border);border-radius:7px;padding:7px 11px;color:#fff;font-family:'Rajdhani',sans-serif;font-size:13px;outline:none;}
+#gc-input:focus{border-color:var(--blue);}
+#gc-send{padding:7px 12px;background:var(--blue);border:none;border-radius:7px;color:#fff;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;cursor:pointer;}
+#gc-hint{font-size:10px;color:var(--muted);letter-spacing:.06em;text-align:left;margin-top:2px;}
 </style>
 </head>
 <body>
@@ -270,6 +280,15 @@ body{background:var(--dark);color:#e0e8f0;font-family:'Rajdhani',sans-serif;over
   </div>
   <div class="rld hidden" id="rld">RELOADING...</div>
   <div class="pickup-txt hidden" id="pickup-txt"></div>
+  <!-- GAME CHAT -->
+  <div id="gc-chat">
+    <div id="gc-msgs"></div>
+    <div id="gc-input-wrap">
+      <input id="gc-input" placeholder="Say something..." maxlength="80"/>
+      <button id="gc-send" onclick="gcSend()">SEND</button>
+    </div>
+    <div id="gc-hint">[ ENTER ] to chat</div>
+  </div>
   <!-- MINIMAP -->
   <div id="minimap">
     <canvas id="mm-canvas" width="160" height="160"></canvas>
@@ -421,7 +440,14 @@ socket.on('newHost', function(data){
   if(data.id === myId){ isHost = true; updateStart(); addChat('System','You are now the host.'); }
 });
 
-socket.on('chatMsg', function(data){ addChat(data.from, data.msg); });
+socket.on('chatMsg', function(data){
+  addChat(data.from, data.msg);
+  // also show in game chat if playing
+  if(!document.getElementById('hud').classList.contains('hidden')){
+    var isMe = myPlayerData && data.from === myPlayerData.name;
+    gcAddMsg(data.from, data.msg, isMe);
+  }
+});
 
 socket.on('votesUpdated', function(v){
   if(roomData) roomData.votes = v;
@@ -1256,6 +1282,50 @@ function loop(){
   drawMinimap();
   renderer.render(scene,cam);
 }
+// ---- GAME CHAT ----
+var gcOpen = false;
+function gcToggle(){
+  gcOpen = !gcOpen;
+  var wrap = document.getElementById('gc-input-wrap');
+  var hint = document.getElementById('gc-hint');
+  wrap.style.display = gcOpen ? 'flex' : 'none';
+  hint.textContent = gcOpen ? '[ ENTER ] send  |  [ ESC ] close' : '[ ENTER ] to chat';
+  if(gcOpen){
+    document.getElementById('gc-input').focus();
+    if(document.exitPointerLock) document.exitPointerLock();
+  } else {
+    document.getElementById('gc-input').blur();
+    document.getElementById('gc').requestPointerLock();
+  }
+}
+function gcSend(){
+  var inp = document.getElementById('gc-input');
+  var msg = inp.value.trim(); if(!msg) return;
+  socket.emit('chatMsg', msg);
+  inp.value = '';
+  gcToggle();
+}
+function gcAddMsg(who, msg, isMe){
+  var feed = document.getElementById('gc-msgs');
+  var el = document.createElement('div');
+  el.className = 'gc-msg';
+  if(isMe) el.style.borderLeftColor = '#f0c040';
+  el.innerHTML = '<span class="gc-who">' + who + ':</span> ' + msg;
+  feed.appendChild(el);
+  // limit to 8 visible messages
+  while(feed.children.length > 8) feed.removeChild(feed.firstChild);
+  // auto fade after 8s
+  setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 8000);
+}
+document.addEventListener('keydown', function(e){
+  if(!document.getElementById('hud').classList.contains('hidden')){
+    if(e.code === 'Enter' && !gcOpen){ e.preventDefault(); gcToggle(); }
+    else if(e.code === 'Enter' && gcOpen){ e.preventDefault(); gcSend(); }
+    else if(e.code === 'Escape' && gcOpen){ e.preventDefault(); gcToggle(); }
+    else if(e.code === 'KeyT' && !gcOpen && document.pointerLockElement === document.getElementById('gc')){ return; }
+  }
+});
+
 // ---- MINIMAP ----
 var mmCtx = null;
 function initMinimap(){ mmCtx = document.getElementById('mm-canvas').getContext('2d'); }
