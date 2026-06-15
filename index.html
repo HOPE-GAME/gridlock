@@ -11,6 +11,25 @@ body{background:var(--dark);color:#e0e8f0;font-family:'Rajdhani',sans-serif;over
 .scr{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;flex-direction:column;}
 .hidden{display:none!important;}
 #s-menu{background:var(--dark);}
+/* AUTH SCREEN */
+#s-auth{background:var(--dark);}
+.auth-logo{font-size:56px;font-weight:700;letter-spacing:.18em;color:#fff;margin-bottom:4px;}
+.auth-logo b{color:var(--blue);}
+.auth-sub{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);letter-spacing:.3em;margin-bottom:28px;}
+.auth-card{background:var(--dark2);border:1px solid var(--border);border-radius:12px;padding:28px 32px;width:360px;}
+.auth-title{font-size:20px;font-weight:700;letter-spacing:.1em;margin-bottom:18px;color:#fff;}
+.auth-tabs{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px;}
+.auth-tab{padding:9px;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:700;background:none;border:none;color:var(--muted);cursor:pointer;letter-spacing:.06em;}
+.auth-tab.on{background:var(--dark3);color:#fff;}
+.auth-err{font-size:12px;color:var(--red);margin-top:6px;min-height:16px;}
+.auth-skip{font-size:11px;color:var(--muted);text-align:center;margin-top:12px;cursor:pointer;text-decoration:underline;}
+.auth-skip:hover{color:#fff;}
+/* PROFILE BADGE */
+#profile-badge{position:fixed;top:14px;right:18px;z-index:300;display:flex;align-items:center;gap:8px;background:#00000066;border:1px solid var(--border);border-radius:8px;padding:6px 12px;pointer-events:all;}
+.pb-name{font-size:13px;font-weight:700;color:#fff;letter-spacing:.06em;}
+.pb-stats{font-size:10px;color:var(--muted);}
+.pb-logout{font-size:11px;color:var(--red);cursor:pointer;margin-left:6px;font-weight:700;}
+.pb-logout:hover{color:#ff6666;}
 .logo{font-size:64px;font-weight:700;letter-spacing:.18em;color:#fff;}
 .logo b{color:var(--blue);}
 .logo-sub{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--muted);letter-spacing:.3em;margin-bottom:32px;}
@@ -165,7 +184,41 @@ body{background:var(--dark);color:#e0e8f0;font-family:'Rajdhani',sans-serif;over
 </head>
 <body>
 
-<div class="scr" id="s-menu">
+<!-- PROFILE BADGE (shown in-game and in menu) -->
+<div id="profile-badge" class="hidden">
+  <div>
+    <div class="pb-name" id="pb-name">Guest</div>
+    <div class="pb-stats" id="pb-stats"></div>
+  </div>
+  <span class="pb-logout" onclick="logout()">LOGOUT</span>
+</div>
+
+<!-- AUTH SCREEN -->
+<div class="scr" id="s-auth">
+  <div class="auth-logo">GRID<b>LOCK</b></div>
+  <div class="auth-sub">MULTIPLAYER TACTICAL SHOOTER</div>
+  <div class="auth-card">
+    <div class="auth-tabs">
+      <button class="auth-tab on" id="at-login" onclick="switchAuthTab('login')">LOGIN</button>
+      <button class="auth-tab" id="at-reg" onclick="switchAuthTab('reg')">REGISTER</button>
+    </div>
+    <div id="auth-login">
+      <div class="field"><label>USERNAME</label><input id="a-lu" placeholder="Your callsign" maxlength="16"/></div>
+      <div class="field"><label>PASSWORD</label><input id="a-lp" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()"/></div>
+      <button class="btn btn-blue" onclick="doLogin()">LOGIN</button>
+      <div class="auth-err" id="auth-err"></div>
+    </div>
+    <div id="auth-reg" class="hidden">
+      <div class="field"><label>USERNAME</label><input id="a-ru" placeholder="Choose a callsign" maxlength="16"/></div>
+      <div class="field"><label>PASSWORD</label><input id="a-rp" type="password" placeholder="At least 4 characters" onkeydown="if(event.key==='Enter')doRegister()"/></div>
+      <button class="btn btn-blue" onclick="doRegister()">CREATE ACCOUNT</button>
+      <div class="auth-err" id="auth-err2"></div>
+    </div>
+    <div class="auth-skip" onclick="playAsGuest()">Play as guest (no account)</div>
+  </div>
+</div>
+
+<div class="scr hidden" id="s-menu">
   <div class="logo">GRID<b>LOCK</b></div>
   <div class="logo-sub">MULTIPLAYER TACTICAL SHOOTER</div>
   <div class="card">
@@ -350,6 +403,120 @@ body{background:var(--dark);color:#e0e8f0;font-family:'Rajdhani',sans-serif;over
   </div>
 </div>
 <script>
+// ---- AUTH ----
+var authToken = localStorage.getItem('gl_token') || null;
+var authUser = localStorage.getItem('gl_user') || null;
+var authStats = null;
+
+function switchAuthTab(t){
+  document.getElementById('at-login').classList.toggle('on', t==='login');
+  document.getElementById('at-reg').classList.toggle('on', t==='reg');
+  document.getElementById('auth-login').classList.toggle('hidden', t!=='login');
+  document.getElementById('auth-reg').classList.toggle('hidden', t!=='reg');
+}
+
+async function doLogin(){
+  var u=document.getElementById('a-lu').value.trim();
+  var p=document.getElementById('a-lp').value;
+  document.getElementById('auth-err').textContent='Logging in...';
+  try{
+    var r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    var d=await r.json();
+    if(d.ok){
+      authToken=d.token; authUser=d.username; authStats=d.stats;
+      localStorage.setItem('gl_token',authToken);
+      localStorage.setItem('gl_user',authUser);
+      afterAuth();
+    } else {
+      document.getElementById('auth-err').textContent=d.error||'Login failed';
+    }
+  } catch(e){ document.getElementById('auth-err').textContent='Server error - try again'; }
+}
+
+async function doRegister(){
+  var u=document.getElementById('a-ru').value.trim();
+  var p=document.getElementById('a-rp').value;
+  document.getElementById('auth-err2').textContent='Creating account...';
+  try{
+    var r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    var d=await r.json();
+    if(d.ok){
+      authToken=d.token; authUser=d.username; authStats={kills:0,deaths:0,wins:0,matches:0};
+      localStorage.setItem('gl_token',authToken);
+      localStorage.setItem('gl_user',authUser);
+      afterAuth();
+    } else {
+      document.getElementById('auth-err2').textContent=d.error||'Registration failed';
+    }
+  } catch(e){ document.getElementById('auth-err2').textContent='Server error - try again'; }
+}
+
+function playAsGuest(){
+  authToken=null; authUser=null; authStats=null;
+  afterAuth();
+}
+
+function logout(){
+  authToken=null; authUser=null; authStats=null;
+  localStorage.removeItem('gl_token');
+  localStorage.removeItem('gl_user');
+  hide('s-menu'); hide('profile-badge');
+  show('s-auth');
+}
+
+function afterAuth(){
+  hide('s-auth');
+  if(authUser){
+    document.getElementById('pb-name').textContent=authUser;
+    updateProfileStats();
+    show('profile-badge');
+  }
+  show('s-menu');
+  // Pre-fill name field
+  if(authUser){
+    document.getElementById('c-name').value=authUser;
+    document.getElementById('j-name').value=authUser;
+  }
+}
+
+function updateProfileStats(){
+  if(!authStats) return;
+  var kd=authStats.deaths>0?(authStats.kills/authStats.deaths).toFixed(1):authStats.kills;
+  document.getElementById('pb-stats').textContent='K:'+authStats.kills+' D:'+authStats.deaths+' W:'+authStats.wins+' KD:'+kd;
+}
+
+async function saveScoreToServer(kills,deaths,accuracy,won){
+  if(!authToken) return;
+  try{
+    await fetch('/api/save-score',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:authToken,kills:kills,deaths:deaths,accuracy:accuracy,won:won})});
+    // refresh stats
+    var r=await fetch('/api/stats/'+authUser);
+    var d=await r.json();
+    if(d.ok){authStats=d.stats;updateProfileStats();}
+  } catch(e){}
+}
+
+async function loadServerLeaderboard(){
+  try{
+    var r=await fetch('/api/leaderboard');
+    var d=await r.json();
+    return d.ok?d.scores:[];
+  } catch(e){return [];}
+}
+
+// Check saved token on load
+(async function(){
+  if(authToken){
+    try{
+      var r=await fetch('/api/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:authToken})});
+      var d=await r.json();
+      if(d.ok){ authUser=d.username; afterAuth(); return; }
+    } catch(e){}
+  }
+  // Show auth screen
+})();
+
 // ---- SOCKET ----
 var socket = io();
 var myId = null;
@@ -1087,9 +1254,10 @@ function endGame(won, winnerName, scores){
   over=true; paused=true;
   exitSpectator();
   if(document.exitPointerLock)document.exitPointerLock();
-  // Save score
+  // Save score locally and to server
   var acc=shots>0?Math.round(hits/shots*100):0;
   saveScore(myPlayerData?myPlayerData.name:'Player',kills,deaths,acc);
+  saveScoreToServer(kills,deaths,acc,won);
   document.getElementById('go-t').textContent=won?'VICTORY!':'DEFEATED';
   document.getElementById('go-s').textContent=won?'You won the match!':winnerName+' won the match.';
   document.getElementById('go-k').textContent=kills;
